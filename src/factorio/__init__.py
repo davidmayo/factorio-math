@@ -1,7 +1,9 @@
 from collections import defaultdict
-from typing import Literal
+from dataclasses import dataclass, field
 
+from rich.console import Console
 from rich.pretty import pprint
+from rich.tree import Tree
 import pydantic
 
 
@@ -32,6 +34,13 @@ building_electric_furnace = BuildingFurnace(name="electric_furnace", crafting_sp
 class Item(pydantic.BaseModel, frozen=True):
     name: str
     raw: bool = pydantic.Field(default=False, repr=False)
+    fluid: bool = pydantic.Field(default=False, repr=False)
+
+    @property
+    def beltable(self) -> bool:
+        """Can this be transported directly on a belt?"""
+        # TODO: Is this right? Seems right.
+        return not self.fluid
 
 
 class RecipeInput(pydantic.BaseModel, frozen=True):
@@ -91,14 +100,14 @@ item_copper_ore = Item(name="copper_ore", raw=True)
 item_red_circuit = Item(name="red_circuit")
 item_plastic_bar = Item(name="plastic_bar")
 item_coal = Item(name="coal", raw=True)
-item_petroleum_gas = Item(name="petroleum_gas")
-item_crude_oil = Item(name="crude_oil", raw=True)
+item_petroleum_gas = Item(name="petroleum_gas", fluid=True)
+item_crude_oil = Item(name="crude_oil", raw=True, fluid=True)
 
 # Blue circuits
 item_blue_circuit = Item(name="item_blue_circuit")
 item_sulfuric_acid = Item(name="item_sulfuric_acid")
 item_sulfur = Item(name="item_sulfur")
-item_water = Item(name="item_water", raw=True)
+item_water = Item(name="item_water", raw=True, fluid=True)
 
 # ================== RECIPES ==================
 # Green circuit
@@ -234,6 +243,40 @@ recipes = {
 }
 
 
+@dataclass
+class SupplyNode:
+    item: Item
+    amount_per_second: float
+    children: list["SupplyNode"] = field(default_factory=list)
+
+    def totals(self) -> dict[Item, float]:
+        totals: defaultdict[Item, float] = defaultdict(float)
+        unvisited = list(self.children)
+        while unvisited:
+            node = unvisited.pop()
+            totals[node.item] += node.amount_per_second
+            unvisited.extend(node.children)
+        return dict(totals)
+
+    def as_rich_tree(self, *, flattened: bool = False) -> Tree:
+        name = self.item.name.removeprefix("item_").replace("_", " ").capitalize()
+        rate = f"{self.amount_per_second:,.1f}"
+        text = f"[bold magenta]{name}[/bold magenta] - [yellow]{rate}/s[/yellow]"
+        if self.item.beltable:
+            red_belt_rate = f"{self.amount_per_second / 30:,.1f}"
+            text += f" ([red]{red_belt_rate} red belts[/red])"
+
+        tree = Tree(text)
+        children = self.children
+        if flattened:
+            children = []
+            for item, amount in sorted(self.totals().items(), key=lambda supply: supply[1], reverse=True):
+                children.append(SupplyNode(item, amount))
+        for child in children:
+            tree.add(child.as_rich_tree())
+        return tree
+
+
 def determine_supplies(
     *,
     target_item: Item,
@@ -264,29 +307,25 @@ def determine_supplies(
         input_item = input.item
         rv.add((input_item, input_amount))
 
-    pprint(recipe)
     return rv
-    pass
 
 
-def determine_supplies_deep(
+def determine_supply_tree(
     *,
     target_item: Item,
     target_amount_per_second: float,
     furnace_kind: BuildingFurnace,
     assembling_machine_kind: BuildingAssemblingMachine,
-) -> dict[Item, float]:
-    """
-    Determine what supplies are needed, recursively, to generate the thing.
-    """
-    rv: defaultdict[Item, float] = defaultdict(float)
+) -> SupplyNode:
+    """Expand each dependency separately, keeping the demand from its parent."""
+    root = SupplyNode(target_item, target_amount_per_second)
 
-    unvisited = [(target_item, target_amount_per_second)]
+    unvisited = [root]
 
     while unvisited:
-        current_item, current_target_amount_per_second = unvisited.pop()
+        node = unvisited.pop()
+        current_item = node.item
         if current_item.raw:
-            print(f"DEBUG: {current_item.name} is raw. skipping")
             continue
 
         # Determine building. Hacky
@@ -311,14 +350,32 @@ def determine_supplies_deep(
 
         current_supplies = determine_supplies(
             target_item=current_item,
-            target_amount_per_second=current_target_amount_per_second,
+            target_amount_per_second=node.amount_per_second,
             building=building,
         )
-        for item, amount_per_second in current_supplies:
-            unvisited.append((item, amount_per_second))
-            rv[item] += amount_per_second
+        for item, amount_per_second in sorted(current_supplies, key=lambda supply: supply[0].name):
+            child = SupplyNode(item, amount_per_second)
+            node.children.append(child)
+            unvisited.append(child)
 
-    return dict(rv)
+    return root
+
+
+def determine_supplies_deep(
+    *,
+    target_item: Item,
+    target_amount_per_second: float,
+    furnace_kind: BuildingFurnace,
+    assembling_machine_kind: BuildingAssemblingMachine,
+) -> dict[Item, float]:
+    """Return combined ingredient rates across all dependency branches."""
+    tree = determine_supply_tree(
+        target_item=target_item,
+        target_amount_per_second=target_amount_per_second,
+        furnace_kind=furnace_kind,
+        assembling_machine_kind=assembling_machine_kind,
+    )
+    return tree.totals()
 
 
 def main() -> None:
@@ -330,11 +387,15 @@ def main() -> None:
 
     pprint(supplies)
 
-    all_supplies = determine_supplies_deep(
+    supply_tree = determine_supply_tree(
         target_item=item_blue_circuit,
         target_amount_per_second=30,
         assembling_machine_kind=building_assembling_machine_2,
         furnace_kind=building_steel_furnace,
     )
 
-    pprint(all_supplies)
+    Console().rule("Detail")
+    Console().print(supply_tree.as_rich_tree())
+    Console().rule("Summary")
+    Console().print(supply_tree.as_rich_tree(flattened=True))
+    # pprint(supply_tree.totals())
