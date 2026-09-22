@@ -248,6 +248,8 @@ class SupplyNode:
     item: Item
     amount_per_second: float
     children: list["SupplyNode"] = field(default_factory=list)
+    building_count: float | None = None
+    building: Building | None = None
 
     def totals(self) -> dict[Item, float]:
         totals: defaultdict[Item, float] = defaultdict(float)
@@ -265,13 +267,26 @@ class SupplyNode:
         if self.item.beltable:
             red_belt_rate = f"{self.amount_per_second / 30:,.1f}"
             text += f" ([red]{red_belt_rate} red belts[/red])"
+        if self.building_count is not None and self.building is not None:
+            building_name = self.building.name.replace("_", " ")
+            text += f" ([repr.number]{self.building_count:,.1f} {building_name}[/repr.number])"
 
         tree = Tree(text)
         children = self.children
         if flattened:
+            building_counts: defaultdict[Item, float] = defaultdict(float)
+            buildings: dict[Item, Building] = {}
+            unvisited = list(self.children)
+            while unvisited:
+                node = unvisited.pop()
+                if node.building_count is not None:
+                    building_counts[node.item] += node.building_count
+                if node.building is not None:
+                    buildings[node.item] = node.building
+                unvisited.extend(node.children)
             children = []
             for item, amount in sorted(self.totals().items(), key=lambda supply: supply[1], reverse=True):
-                children.append(SupplyNode(item, amount))
+                children.append(SupplyNode(item, amount, building_count=building_counts.get(item), building=buildings.get(item)))
         for child in children:
             tree.add(child.as_rich_tree())
         return tree
@@ -348,6 +363,11 @@ def determine_supply_tree(
             assert len(recipe.valid_buildings) == 1, f"Whoops. {recipe.valid_buildings=}"
             building = next(iter(recipe.valid_buildings))
 
+        node.building = building
+        node.building_count = node.amount_per_second / recipe.per_second(
+            item=current_item,
+            crafting_speed=building.crafting_speed,
+        )
         current_supplies = determine_supplies(
             target_item=current_item,
             target_amount_per_second=node.amount_per_second,
@@ -398,4 +418,4 @@ def main() -> None:
     Console().print(supply_tree.as_rich_tree())
     Console().rule("Summary")
     Console().print(supply_tree.as_rich_tree(flattened=True))
-    # pprint(supply_tree.totals())
+    pprint(supply_tree.totals())
