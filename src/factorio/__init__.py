@@ -10,11 +10,14 @@ class Building(pydantic.BaseModel, frozen=True):
     crafting_speed: float
     module_slots: int
 
+
 class BuildingAssemblingMachine(Building):
     pass
 
+
 class BuildingFurnace(Building):
     pass
+
 
 building_chemical_plant = Building(name="chemical_plant", crafting_speed=1.0, module_slots=3)
 building_oil_refinery = Building(name="oil_refinery", crafting_speed=1.0, module_slots=3)
@@ -54,7 +57,7 @@ class Recipe(pydantic.BaseModel):
         crafting_speed: float,
     ) -> float:
         """Calculate the amount that this recipe will create per second, which is
-        
+
         (crafting_speed * recipe_amount / crafting_time)"""
         if item is None:
             if len(self.outputs) != 1:
@@ -305,7 +308,7 @@ def determine_supplies_deep(
             # Should only be one legal location for the recipe. Verify.
             assert len(recipe.valid_buildings) == 1, f"Whoops. {recipe.valid_buildings=}"
             building = next(iter(recipe.valid_buildings))
-        
+
         current_supplies = determine_supplies(
             target_item=current_item,
             target_amount_per_second=current_target_amount_per_second,
@@ -316,8 +319,6 @@ def determine_supplies_deep(
             rv[item] += amount_per_second
 
     return dict(rv)
-        
-
 
 
 def main() -> None:
@@ -328,7 +329,6 @@ def main() -> None:
     )
 
     pprint(supplies)
-
 
     all_supplies = determine_supplies_deep(
         target_item=item_blue_circuit,
