@@ -244,18 +244,20 @@ def determine_supplies(
     """
 
     recipe = recipes[target_item]
-    per_second = recipe.per_second(
-        crafting_speed=building.crafting_speed,
-        item=target_item,
-    )
-    # print(f"{target_amount_per_second=}")
-    # print(f"{per_second=}")
-    recipe_count = target_amount_per_second / per_second
-    # print(f"{recipe_count=}")
+
+    output = None
+    for __output in recipe.outputs:
+        if __output.item == target_item:
+            output = __output
+            break
+    if output is None:
+        raise ValueError(f"Nothing in {recipe.outputs} matches {target_item!r}")
+
+    crafts_per_second = target_amount_per_second / output.amount
 
     rv = set()
     for input in recipe.inputs:
-        input_amount = input.amount * recipe_count
+        input_amount = input.amount * crafts_per_second
         input_item = input.item
         rv.add((input_item, input_amount))
 
@@ -329,7 +331,7 @@ def main() -> None:
 
 
     all_supplies = determine_supplies_deep(
-        target_item=item_green_circuit,
+        target_item=item_blue_circuit,
         target_amount_per_second=30,
         assembling_machine_kind=building_assembling_machine_2,
         furnace_kind=building_steel_furnace,
